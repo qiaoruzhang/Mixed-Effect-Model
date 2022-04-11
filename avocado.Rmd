@@ -1,0 +1,646 @@
+---
+title: | 
+  | A statistical assessment
+subtitle: |
+ Qiaoru Zhang
+fontsize: 12pt
+header-includes:
+- \usepackage{float}
+
+output:
+  pdf_document:
+    extra_dependencies: ["float"]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,fig.pos = "H", out.extra = "")
+```
+
+```{r,include = FALSE}
+# install.packages("tinytex")
+# tinytex::install_tinytex()
+# install.packages("kableExtra")
+# For dev version
+# install.packages("devtools")
+# devtools::install_github("haozhu233/kableExtra")
+# install.packages("devtools")
+# devtools::install_github("renkun-ken/formattable")
+# install.packages("formattable")
+# remove.packages("yaml")
+# install.packages("yaml")
+# install.packages("tidyverse",dependencies = TRUE, repos = "http://cran.us.r-project.org")
+# install.packages("ggplot2",dependencies = TRUE, repos = "http://cran.us.r-project.org")
+# devtools::install_github('gmonette/spida2')
+library(spida2)
+library(car)
+library(lattice)
+library(latticeExtra)
+library(boot)
+library(tidyverse)
+library(faraway)
+library(magrittr) # needs to be run every time you start R and want to use %>%
+library(dplyr)    # alternatively, this also loads %>%
+library(car)
+library(readxl)
+library(margins)
+library(webuse)
+#library(kableExtra)
+#install.packages("data.table")
+library(data.table)
+library(tidyverse)
+library(MASS)
+options( warn = -1 )
+library(lattice)
+library(latticeExtra)
+library(boot)
+library(faraway)
+library(magrittr) # needs to be run every time you start R and want to use %>%
+library(dplyr)    # alternatively, this also loads %>%
+library(car)
+library(readxl)
+library(margins)
+library(webuse)
+library(data.table)
+library(tidyverse)
+library(here)
+library(bestNormalize)
+library(MASS)
+library(modelsummary)
+library(Matrix)
+library(lfe)
+library(tidyr)
+```
+
+
+
+
+
+```{r data}
+avocado <- read.csv("/Users/zhangqiaoru/Downloads/avocado/avocado.csv", stringsAsFactors=FALSE)
+
+avocado_sub <- avocado[c("Date", "AveragePrice",  "type", "year", "region")]
+#View(avocado_sub)
+avocado_sub$Month <- str_sub(avocado_sub$Date,1,nchar(avocado_sub$Date)-3)
+avocado_sub <- avocado_sub[, c("Date","Month", "AveragePrice",  "type", "year", "region")]
+#View(avocado_sub)
+
+p <- ggplot(data = avocado_sub, aes(x = AveragePrice, y = ..density..)) +
+    geom_histogram(color="darkblue", fill="lightblue")+ 
+  ggtitle("Plot of AveragePrice")+
+  geom_density(color = "red")
+p%+%
+  geom_vline(aes(xintercept = median(AveragePrice)),col='red',size=1)+annotate(x=1.37,y=+Inf,label="median(AveragePrice) = 1.37",vjust=1,geom="label")
+
+# plot the data using ggplot
+ggplot(data = avocado_sub, aes(x = Month, y = AveragePrice, color= type)) +
+  geom_point() +
+  labs(x = "Date",
+    y = "AveragePrice")+ 
+  ggtitle("Plot of AveragePrice by Month for each type") + 
+scale_color_brewer(palette = 'Set1')+ theme(axis.text.x = element_text(angle = 30))
+
+
+# plot the data using ggplot
+library(viridis)
+ggplot(data = avocado_sub, aes(x = Month, y = AveragePrice, color= region)) +
+  geom_point() +
+  labs(x = "Date",
+    y = "AveragePrice")+ 
+  ggtitle("Plot of AveragePrice by Month for each region") + 
+ theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+  scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_fill_viridis(discrete = TRUE) 
+
+ggplot(data = avocado_sub, aes(x = type, fill = type)) +
+geom_bar(stat = "count") + 
+stat_count(geom = "text", colour = "white", size = 3.5,
+aes(label = ..count..),position=position_stack(vjust=0.5))+
+  ggtitle("Plot of Avocado type")+ 
+scale_fill_manual("Avocado Type", values = c("conventional" = "darkgreen", "organic" = "blue"))+
+  labs(y= "Number of observations", x = "Avocado Type") 
+```
+
+
+
+
+
+
+```{r, echo=FALSE}
+library(gridExtra)
+
+ggplot(avocado_sub, aes(year, AveragePrice)) +
+  geom_point() +
+  facet_wrap(~ region, nrow = 4) +
+  geom_smooth(method = "lm") +
+  theme_bw() +
+  labs(x = "Year for rach region", y = "AveragePrice") +
+  coord_cartesian(ylim = c(0, 3))
+
+```
+
+
+```{r dummy}
+avocado$type_dum <- ifelse(avocado$type == 'conventional', 1, 2)
+str(avocado)
+view(avocado)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Choose the best data transforming method
+
+## Why do we need transformation?
+
+As shown in previous regression diagnosis, directly using the count data to directly run the OLS model would violate the OLS assumptions. It is questionable to use and interpret results from assumption violated model.
+
+The main reason of the OLS model assumption violation is that the data are highly skewed.
+
+```{r , echo=FALSE}
+avocado_sub$Month <- factor(avocado_sub$Month)
+avocado_sub$region <- factor(avocado_sub$region)
+avocado_sub$type <- factor(avocado_sub$type)
+View(avocado_sub)
+summary(avocado_sub)
+```
+
+## Which transformation method should we use?
+
+Use the `bestNormalize` model to select an optimal data normalization transformation methods. And would like to find one transformation method that applies performs generally well on either dependent variables (retweet count and favorite count) and independent variables (total count, tweets with photo count, covid related count, etc.) in our data.
+
+How to define normalize: To transform a vector of data in such a way that the transformed values follow a Gaussian distribution (or equivalently, a bell curve). The OLS model could expect to follow its assumptions after the normalization transformation. 
+
+
+**Find the optimal data transformation method:**
+
+Note that Box-Cox transformation could only be applied on positive data. Since we have a lot of count data of 0, it may not be appropriate to use the Box-Cox transformation to transform all variables.
+
+And we may also avoid the ordered quantile normalization transformation introduced in this package. ORQ transforms the data based off of a rank mapping to the normal distribution. This aims to guarantee normally distributed transformed data. Our transformation purpose is not to guarantee normality but a suitable transformation.
+
+And we would examine the transformation performance within the data, so we apply some common transformations *within all sample observations* and examine normality statistics for each variable. The closer the normality statistics closer to 1, the better the transformation performs to achieve normality.
+
+**Whether or not to standardize the data after the data transformation:**
+
+```{r}
+library(lamW)
+arcsinh_x_std <- lambert(avocado_sub$AveragePrice, type = "s", standardize = TRUE)
+arcsinh_x_ori <-lambert(avocado_sub$AveragePrice, type = "s", standardize = FALSE)
+df_arcsinh_x_std <- data.frame( fav_std = arcsinh_x_std$x.t)
+df_arcsinh_x_ori <- data.frame( fav_ori = arcsinh_x_ori$x.t)
+
+ggplot(df_arcsinh_x_std,aes(x = fav_std, y = ..density..))+
+  geom_histogram( binwidth = 0.2,color = "black", fill = "#33CCCC", alpha = 0.8)+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(x = "AveragePrice Count", y = "Frequency Count", title = "Lambert Transformation of AveragePrice with Standardization", caption = "Binwidth of 0.2")+
+  geom_density(color = "red")
+
+ggplot(df_arcsinh_x_ori,aes(x = fav_ori, y = ..density..))+
+  geom_histogram( binwidth = 0.35, color = "black", fill = "#33CCCC", alpha = 0.8)+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(x = "AveragePrice Count", y = "Frequency Count", title = "Lambert Transformation of AveragePrice without Standardization", caption = "Binwidth of 0.35")+
+  geom_density(color = "red")
+```
+```{r,include=FALSE}
+# this uses CV within the sample
+#View(avocado_sub$AveragePrice)
+# this uses CV within the sample
+# set.seed(1234)
+# acc_eval_df <- tibble(name = c("arcsinh_x","boxcox","lambert_s","log_x","no_transform","sqrt_x","yeojohnson"))
+# try({
+#   #print(i)
+#   named_num <- round(bestNormalize(avocado_sub$AveragePrice,standardize = TRUE,allow_exp = FALSE, allow_lambert_s = TRUE, allow_orderNorm = # FALSE)$norm_stats,3)
+#   view(named_num)
+#   normstats_eval_df <- enframe(named_num, value = i)
+#   view(normstats_eval_df)
+#   acc_eval_df <- Reduce(function(...) merge(...,all = TRUE), list(acc_eval_df ,normstats_eval_df))
+#   view(acc_eval_df)
+# })
+```
+
+```{r, include=FALSE}
+## add include=FALSE
+# t_acc_eval_df <- data.frame(t(acc_eval_df[-1]))
+# colnames(t_acc_eval_df) <- acc_eval_df[, 1]
+# t_acc_eval_df <- cbind(Variable = rownames(t_acc_eval_df), t_acc_eval_df)
+# rownames(t_acc_eval_df) <- c()
+# t_acc_eval_df
+```
+
+
+```{r, echo=FALSE}
+## add include=FALSE
+
+lambert_ori <-cbind(avocado_sub, df_arcsinh_x_ori$fav_ori[match(rownames(avocado_sub), rownames(df_arcsinh_x_ori))])
+names(lambert_ori)[7] <- 'lambert_price'
+lambert_ori <- lambert_ori[, c("Date","year", "Month",  "AveragePrice", "lambert_price","type", "region")]
+lambert_ori <- within(lambert_ori, rm("Date"))
+# Month
+lambert_ori$Month_str = str_sub(lambert_ori$Month,6,7)
+lambert_ori <- lambert_ori[, c("year", "Month", "Month_str", "AveragePrice", "lambert_price","type", "region")]
+#lambert_ori$month_str  <- sapply(lambert_ori$month_str,function(x) grep(paste("(?i)",x,sep=""),month.abb))
+#lambert_ori$month_str <- as.numeric(coviddescriptive$user_created_month)
+lambert_ori <- within(lambert_ori, rm("Month"))
+lambert_ori <- within(lambert_ori, rm("AveragePrice"))
+names(lambert_ori)[2] <- 'Month'
+View(lambert_ori)
+summary(lambert_ori)
+
+library(data.table)
+lambert_dummy <- copy(lambert_ori)
+lambert_dummy$type_conv <- ifelse(lambert_dummy$type == 'conventional', 1, 0)
+lambert_dummy$type_org <- ifelse(lambert_dummy$type == 'organic', 1, 0)
+#View(lambert_dummy)
+```
+
+```{r, echo=FALSE}
+# Use single color
+ggplot(lambert_ori, aes(x=year, y=lambert_price)) +
+  geom_boxplot(fill='#A4A4A4', color="black")+
+  theme_classic()
+# Change box plot colors by groups
+p<-ggplot(lambert_ori, aes(x=year, y=lambert_price, fill=type)) +
+  geom_boxplot()
+p
+```
+```{r, echo=FALSE}
+# Use single color
+ggplot(lambert_ori, aes(x=Month, y=lambert_price)) +
+  geom_boxplot(fill='#A4A4A4', color="black")+
+  theme_classic()
+# Change box plot colors by groups
+p<-ggplot(lambert_ori, aes(x=Month, y=lambert_price, fill=type)) +
+  geom_boxplot()
+p
+```
+```{r, echo=FALSE}
+# Use single color
+ggplot(lambert_ori, aes(x=Month, y=lambert_price)) +
+  geom_boxplot(fill='#A4A4A4', color="black")+
+  theme_classic()
+# Change box plot colors by groups
+p<-ggplot(lambert_ori, aes(x=Month, y=lambert_price, fill=type)) +
+  geom_boxplot()
+p
+```
+
+
+```{r, echo=FALSE}
+
+
+lambert_ori111 <-cbind(avocado_sub, df_arcsinh_x_ori$fav_ori[match(rownames(avocado_sub), rownames(df_arcsinh_x_ori))])
+names(lambert_ori111)[7] <- 'lambert_price'
+lambert_ori111 <- lambert_ori111[, c("Date","year", "Month",  "AveragePrice", "lambert_price","type", "region")]
+lambert_ori111 <- within(lambert_ori111, rm("Date"))
+# Month
+lambert_ori111$Month_str = str_sub(lambert_ori111$Month,6,7)
+lambert_ori111 <- lambert_ori111[, c("year", "Month", "Month_str", "AveragePrice", "lambert_price","type", "region")]
+#lambert_ori111$month_str  <- sapply(lambert_ori111$month_str,function(x) grep(paste("(?i)",x,sep=""),month.abb))
+#lambert_ori111$month_str <- as.numeric(coviddescriptive$user_created_month)
+lambert_ori111 <- within(lambert_ori111, rm("Month"))
+#lambert_ori111 <- within(lambert_ori111, rm("AveragePrice"))
+names(lambert_ori111)[2] <- 'Month'
+lambert_ori111$type <- ifelse(avocado$type == 'conventional', 1, 0)
+lambert_ori111$type <- as.numeric(lambert_ori111$type)
+lambert_ori111$region <- unclass(lambert_ori111$region)
+lambert_ori111$region <- as.numeric(lambert_ori111$region)
+class(lambert_ori111$region)
+lambert_ori111$Month <- as.numeric(lambert_ori111$Month)
+
+
+View(lambert_ori111)
+summary(lambert_ori111)
+```
+
+```{r,echo=FALSE}
+#res<-rcorr(as.matrix(lambert_ori111))
+res <- cor(lambert_ori111, method = c("pearson", "kendall", "spearman"))
+
+oldp <- par(cex=1)
+par(xpd=TRUE)
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+# col <- colorRampPalette( c("#4477AA", "#77AADD",  "#FFFFFF","#EE9988", "#BB4444"))
+# mat1 <- cor(covid_reg) 
+
+acc <- corrplot(res,
+         # col=col(100), 
+         # cl.lim=c(-1, 1),
+         type="upper",tl.pos="tp",tl.col="black", tl.srt=45, method = "color",cl.pos = "r",diag= TRUE,
+         #,p.mat = p.mat[[1]], insig = "p-value", sig.level=-0.1, 
+         number.cex= 1/ncol(res), 
+         addgrid.col = "black", 
+         # p.mat = p.mat[[1]], sig.level = c(0.001, 0.01, 0.05), insig = "label_sig", pch.col = "black",pch.cex = 1.5
+         ) 
+
+corrplot(res, add=T,type="lower", method = "number",col="black",cl.pos = "n",number.cex= 12/ncol(res),tl.pos="n",tl.col="black",diag=TRUE,
+number.font = .05, addgrid.col = "black"
+#, p.mat = p.mat[[1]], sig.level = c(0.001, 0.01, 0.05), insig = "label_sig", pch.col = "black",pch.cex = 3
+,mar=c(0, 0, 13, 0)
+)
+
+par(oldp)  
+```
+
+
+
+```{r, include=FALSE}
+lambert_dummy_cut <- copy(lambert_ori111)
+
+lambert_dummy_cut <- lambert_dummy_cut %>% 
+  mutate(zscore = abs((lambert_price - mean(lambert_price))/sd(lambert_price)))
+lambert_dummy_cut <- filter(lambert_dummy_cut, zscore < 3)
+#View(lambert_dummy_cut)
+
+# Use single color
+ggplot(lambert_dummy_cut, aes(x=Month, y=lambert_price)) +
+  geom_boxplot(fill='#A4A4A4', color="black")+
+  theme_classic()
+# Change box plot colors by groups
+p<-ggplot(lambert_dummy_cut, aes(x=Month, y=lambert_price, fill=type)) +
+  geom_boxplot()
+p
+```
+
+
+
+```{r, echo=FALSE}
+
+
+
+
+
+trans_OLS_AveragePrice <- lm(lambert_price ~ Month + year + type + region, data = lambert_ori)
+summary(trans_OLS_AveragePrice)
+# compute the residual
+
+# We now check whether the model is well fitted using diagnostic plots.
+
+library(ggplot2)
+library(ggfortify)
+
+answer7 <- function(my_lm) 
+{
+  autoplot(my_lm, which = 1:2) +
+    theme_bw()
+}
+answer7(trans_OLS_AveragePrice)
+
+
+
+
+
+cooksD <- cooks.distance(trans_OLS_AveragePrice)
+influential <- cooksD[(cooksD > (3 * mean(cooksD, na.rm = TRUE)))]
+length(influential)
+
+
+```
+
+
+
+
+```{r, echo=FALSE}
+library(lme4)
+
+m0.glm <- glm(lambert_price ~ 1, family = gaussian, data = lambert_ori)
+m0.lmer = lmer(lambert_price ~ 1 + (1|type), REML = T, data = lambert_ori)
+AIC(logLik(m0.glm))
+AIC(logLik(m0.lmer))
+summary(m0.lmer)
+```
+
+
+
+```{r, echo=FALSE}
+m1.lmer <- lmer(lambert_price ~ (1|type) + Month, REML = T, data = lambert_ori)
+m2.lmer <- lmer(lambert_price ~ (1|type) + Month + region, REML = T, data = lambert_ori)
+m3.lmer <- lmer(lambert_price ~ (1|type) + Month + region + year, REML = T, data = lambert_ori)
+m4.lmer <- lmer(lambert_price ~ (1|type) + Month + (1|region)  + year, REML = T, data = lambert_ori)
+anova(m1.lmer, m2.lmer, test = "Chi")
+anova(m3.lmer, m2.lmer, test = "Chi")
+anova(m4.lmer, m2.lmer, test = "Chi")
+summary(m2.lmer)
+```
+
+```{r, echo=FALSE}
+
+summary(m3.lmer)
+
+plot(m3.lmer, type ~ resid(.), abline = 0 ) # generate diagnostic plots
+
+plot(m3.lmer, resid(., type = "pearson") ~ fitted(.) | type, id = 0.05, 
+     adj = -0.3, pch = 20, col = "gray40")
+
+```
+```{r, echo=FALSE}
+plot(m3.lmer, resid(., type = "pearson") ~ fitted(.) | type, id = 0.05, 
+     adj = -0.3, pch = 20, col = "gray40")
+
+```
+
+```{r, echo=FALSE}
+plot(m3.lmer, resid(., type = "pearson") ~ fitted(.) | region, id = 0.05, 
+     adj = -0.3, pch = 20, col = "gray40")
+
+```
+
+```{r, echo=FALSE}
+library(lme4)
+library(nlme)
+library(ModelMetrics)
+# generate models
+m4.lme = lme(lambert_price ~ Month + region, random = ~1|type, data = lambert_ori, method = "ML")
+m5.lme <- update(m4.lme, weights = varIdent(form = ~ 1 | type))
+
+```
+
+```{r, echo=FALSE}
+anova(m5.lme)          
+```
+
+```{r, echo=FALSE}
+intervals(m5.lme)      
+```
+
+
+```{r, echo=FALSE}
+library(MuMIn)
+r.squaredGLMM(m5.lme)
+sjPlot::plot_model(m5.lme, type = "pred", terms = c("Month")) +
+  # show uncentered date rather than centered date
+  scale_x_continuous(name = "Month", 
+                     breaks = seq(-500, 300, 100), 
+                     labels = seq(1150, 1950, 100))
+```
+
+```{r, echo=FALSE}
+# extract predicted values
+lambert_ori$Predicted <- predict(m5.lme, lambert_ori)
+# plot predicted values
+ggplot(lambert_ori, aes(Month, Predicted)) +
+  facet_wrap(~type) +
+  geom_point(aes(x = Month, y = Predicted), color = "blue", size = .5) +
+  geom_smooth(aes(y = Predicted), color = "blue", linetype = "solid", 
+              se = T, method = "lm") +
+  guides(color=guide_legend(override.aes=list(fill=NA))) +  
+  theme_set(theme_bw(base_size = 10)) +
+  theme(legend.position="top", legend.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) + 
+  xlab("Month of AveragePrice") + 
+  ylab("AveragePrice")
+```
+
+
+
+```{r, echo=FALSE}
+# extract predicted values
+lambert_ori$Predicted <- predict(m5.lme, lambert_ori)
+# plot predicted values
+ggplot(lambert_ori, aes(Month, Predicted)) +
+  facet_wrap(~region) +
+  geom_point(aes(x = Month, y = Predicted), color = "blue", size = .5) +
+  geom_smooth(aes(y = Predicted), color = "blue", linetype = "solid", 
+              se = T, method = "lm") +
+  guides(color=guide_legend(override.aes=list(fill=NA))) +  
+  theme_set(theme_bw(base_size = 10)) +
+  theme(legend.position="top", legend.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) + 
+  xlab("Date of composition")
+```
+
+```{r, echo=FALSE}
+par(mfrow = c(2, 2))           # display plots in 2 rows and 2 columns
+plot(m5.lme, pch = 20, col = "black", lty = "dotted"); par(mfrow = c(1, 1))
+
+plot(m5.lme, type ~ resid(.), abline = 0 ) # generate diagnostic plots
+
+plot(m5.lme, resid(., type = "pearson") ~ fitted(.) | type, id = 0.05, 
+     adj = -0.3, pch = 20, col = "gray40")
+
+# fitted values by Genre
+plot(m5.lme, form = resid(., type = "p") ~ fitted(.) | type, abline = 0, 
+     cex = .5, pch = 20, col = "black")
+
+# residuals of fitted values against observed
+qqnorm(m5.lme, pch = 20, col = "black")
+```
+```{r, echo=FALSE}
+# residuals by genre
+qqnorm(m5.lme, ~resid(.) | type, pch = 20, col = "black" )
+```
+```{r, echo=FALSE}
+# residuals by genre
+qqnorm(m5.lme, ~resid(.) | region, pch = 20, col = "black" )
+```
+
+```{r, echo=FALSE}
+summary(m5.lme)
+```
+
+```{r, echo=FALSE}
+# load package
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+tab_model(m5.lme)
+```
+
+```{r, echo=FALSE}
+r.squaredGLMM(m5.lme)
+```
+
+```{r, echo=FALSE}
+r2.corr.mer <- function(m) {
+  lmfit <-  lm(model.response(model.frame(m)) ~ fitted(m))
+  summary(lmfit)$r.squared
+}
+
+library(lme4)
+summary(m5.lme)
+```
+
+
+```{r, echo=FALSE}
+library("lme4")
+library("languageR")
+library(brew)
+library(report)
+library(knitr)
+report::report(m5.lme)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
