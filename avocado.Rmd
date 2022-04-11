@@ -2,7 +2,7 @@
 title: | 
   | A statistical assessment
 subtitle: |
- Qiaoru Zhang
+ Maggie Zhang
 fontsize: 12pt
 header-includes:
 - \usepackage{float}
